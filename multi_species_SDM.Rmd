@@ -1,0 +1,159 @@
+---
+title: "Unimodal functions and multi-species SDMs using mixed-effects models"
+author: "Petr Keil"
+date: "October 6, 2017"
+output: 
+  html_document: 
+    highlight: pygments
+    number_sections: yes
+    theme: cerulean
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Here I attempt to clarify some ideas that we discussed with Duarte Viana today. The material will probably seem a bit random to a random reader.
+
+# How does a parabola on a log scale look on a linear scale?
+
+Let's consider an `Env` variable representing a gradient of an environmental condition. We can model logarithm of abundance (`log_Abund`) as a regular parabola (2nd-degree polynomial): $$\log Abund = 2Env - 4Env^2$$
+
+```{r}
+  Env <- seq(-2, 2, by = 0.1)
+  log_Abund <- 2*Env - 4*(Env^2)
+```
+
+Now we can plot the abunance on both logarithmic and linear scale. We can see that
+what we modelled as a parabola going all the way down to -20, is actually a bell-shaped curve on the linear scale:
+
+```{r, fig.width=10}
+  par(mfrow=c(1,2))
+  plot(Env, log_Abund, type="l", main="Abundance on a log scale")
+  plot(Env, exp(log_Abund), type="l", main="Abundance on a linear scale")
+```
+
+**Lesson:** Polynomial **GLMs (and related models) with log-link function** can indeed
+be used to model non-linear unimodal responses of species to environment. The same logic applies for **logit link functions**, e.g. in models for binomially distributed data.
+
+# Can the 2nd-degree polynomial fit a very narrow responses?
+
+Is a parabola fitted on the log scale flexible enough to fit extremely narrow 
+species responses to environment, where the species is missing from most of the 
+gradient?
+
+Here I manually generate a species with a very narrow niche, and with a lots of zeroes in the data:
+
+```{r}
+  Env <- seq(0, 1, by = 0.01)
+  Abund <- rep(0, times = length(Env))
+  Abund[c(48:52)] <- c(5, 7, 9, 5, 1)
+  plot(Env, Abund, main="Only data")
+```
+
+Here I fit the parabola using `glm`; setting the family to `"poisson"` automatically invokeslog link function:
+
+```{r}
+  m1 <- glm(Abund~poly(Env,2), family="poisson")
+```
+
+And this is how the fitted model looks like:
+
+```{r}
+  plot(Env, Abund, main="Data and the model")
+  lines(Env, predict(m1, type="response"))
+```
+
+**Lesson:** Even very simple polynomial GLMs can very well describe responses
+of species with very narrow optima along an environmental gradients.
+
+# Multi-species mixed-effects SDM in lme4
+
+Here I will use the `vegan` dataset `mite` to show how a simple multi-species
+SDM can be done.
+
+```{r, message=FALSE, warning=FALSE}
+  library(vegan)
+  library(lme4)
+  library(tidyr)
+  library(ggplot2)
+```
+
+## Prepare the data
+
+```{r}
+  data(mite)
+  data(mite.env)
+  data(mite.xy)
+  
+  X <- data.frame(mite.xy, SubsDens = mite.env$SubsDens, mite)
+  head(X)
+```
+
+I need to rearrange the data from the site X specie matrix to a long format
+using the `gather` function from `tidyr`:
+
+```{r}
+ mite.long <- gather(data=X, species=colnames(mite), factor_key=TRUE)
+ names(mite.long)[4:5] <- c("species","N")
+ head(mite.long)
+```
+
+I will scale the continual predictor in the data to 0 mean and unit variance:
+
+```{r}
+  mite.long$SubsDens <- scale(mite.long$SubsDens )
+```
+
+## Fit the mixed-effect models
+
+I will fit two models, each of them with varying slopes and varying intercepts, one with a linear response, the other with a polynomial response to the environment (substrate density `SubsDens`):
+
+```{r}
+m.lin <- glmer(N ~ SubsDens + (1 + SubsDens|species),
+               data=mite.long, family="poisson")
+
+m.poly <- glmer(N ~ poly(SubsDens,degree=2) + (1 + poly(SubsDens, degree=2)|species),
+                data=mite.long, family="poisson")
+```
+
+The polynomial model obviously had problems with convergence.
+
+## Extract model predictions
+
+```{r, fig.width=10}
+  preds <- data.frame(mite.long, preds=predict(m.poly, type="response"))
+```
+
+## Plot the predictions
+
+### Log scale
+
+```{r, fig.width=10}
+  ggplot(data=preds, aes(x=SubsDens, y=log(N))) +
+    geom_point(aes(colour=species)) + 
+    geom_line( aes(x=SubsDens, y=log(preds), colour=species) )
+```
+
+### Linear scale
+
+```{r, fig.width=10}
+  ggplot(data=preds, aes(x=SubsDens, y=N)) +
+    geom_point(aes(colour=species)) + 
+    geom_line( aes(x=SubsDens, y=preds, colour=species) ) +
+    ylim(c(0,100))
+```
+
+# Session info
+
+```{r}
+  sessionInfo()
+```
+
+
+
+
+
+
+
+
